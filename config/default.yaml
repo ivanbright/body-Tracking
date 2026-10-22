@@ -1,0 +1,370 @@
+# YOLOX persistent face tracking - default configuration
+#
+# Every value below can be overridden through the environment, e.g.
+#   YOLOX_DETECTOR__BACKEND=yolox_onnx
+#   YOLOX_TARGET__MODE=track_id
+#
+# Relative paths are resolved against the `yolox/` project root.
+
+detector:
+  # One of: yolox_onnx | haar
+  #
+  # yolox_onnx - the primary path: a YOLOX model exported to ONNX, executed with
+  #              ONNX Runtime. The model has to be trained on faces; a COCO
+  #              "person" model is not a face detector. See models/README.md.
+  # haar        - OpenCV Haar cascade face detector. DEVELOPMENT FALLBACK ONLY:
+  #              weaker than a trained YOLOX face model. Results produced with
+  #              this backend are never reported as YOLOX results.
+  backend: yolox_onnx
+
+  # Path to the ONNX model (used by the yolox_onnx backend).
+  model_path: models/yolox_face.onnx
+
+  # Optional label list, one class name per line. Only used to give the
+  # detections a readable name in the overlay.
+  labels_path: ""
+
+  # Network input resolution [width, height]. When the model declares a static
+  # input size, the model wins and this value is only a fallback.
+  input_size: [640, 640]
+
+  # Minimum detection confidence to keep a detection.
+  score_thresh: 0.3
+
+  # IoU threshold used by non-maximum suppression.
+  nms_thresh: 0.45
+
+  # Only detections whose class name is in this list are kept.
+  # Keep only these class names. Empty = keep every class. Ignored by `haar`.
+  # The bundled model is the COCO detector, so "person" is the useful class:
+  # the whole body is tracked and framed. With a 1-class face model set this
+  # to [] so its single class is kept.
+  target_classes: [person]
+
+  # ONNX Runtime execution providers, in preference order. The first one that is
+  # actually available is used; CPU is always appended as a fallback.
+  providers: [CUDAExecutionProvider, CPUExecutionProvider]
+
+  # auto | nchw | nhwc - "auto" reads the layout from the model's input tensor.
+  input_layout: auto
+
+  # letterbox | stretch - how the frame is fitted to the network input.
+  # YOLOX reference pre-processing is letterbox.
+  resize_mode: letterbox
+
+  # Value range of the network input.
+  #
+  # 0_255 - raw pixel values as float32. This is the YOLOX reference
+  #         convention: the head was trained on 0-255 inputs
+  #         (yolox/models/transforms.py does not divide by 255), so an
+  #         official export expects this range.
+  # 0_1   - divide by 255. Only for exports that ship their own normalisation.
+  input_range: "0_255"
+
+  # Channel order of the network input.
+  #
+  # rgb - YOLOX reference convention (the image is converted from BGR to RGB).
+  # bgr - keep the channel order of the source image.
+  color_order: rgb
+
+  # Output layout of the ONNX export. The decoder is never guessed from the
+  # data - run `python -m src.inspect_model <model.onnx>` and set this to the
+  # layout the model really produces.
+  #
+  # yolox_raw     - (1, N, 5+C) [cx, cy, w, h, obj, cls...] where the box is
+  #                 still in stride units; needs grid + stride decoding. This is
+  #                 Megvii's export_onnx.py DEFAULT (--decode_in_inference is
+  #                 a store_true flag and therefore off by default).
+  # yolox_decoded - (1, N, 5+C) same columns, box already decoded into
+  #                 network-input pixels (--decode_in_inference).
+  # yolox_dfl     - (1, N, 4*reg_max+1+C) distribution-focal regression logits.
+  # xyxy          - (1, N, 6) [x1, y1, x2, y2, score, class_id].
+  output_format: yolox_raw
+
+  # none | sigmoid. YOLOX applies the sigmoid inside the head, so the exported
+  # objectness/class scores are already probabilities: keep "none".
+  activation: none
+
+  # Number of classes of the model. A single-class face model has 1.
+  # Used to validate the model's real output shape.
+  num_classes: 1
+
+  # Strides of the detection head, used by the grid decoding.
+  strides: [8, 16, 32]
+
+  # reg_max of a distribution-focal-regression head.
+  reg_max: 16
+
+  # Run one dummy inference at start-up so the first real frame is not slow.
+  warmup: true
+
+  # Intra-op threads for ONNX Runtime (0 = runtime default).
+  # Keep this low when the identity layer is on: MediaPipe runs its own thread
+  # pool too, and two pools on all cores fight each other. 4 is a good default.
+  num_threads: 4
+
+source:
+  # camera | video
+  type: camera
+
+  # Camera index (OpenCV).
+  camera_index: 0
+
+  # Path to a video file, used when type == video.
+  video_path: ""
+
+  # Requested capture resolution (camera only).
+  width: 640
+  height: 480
+
+  # Assumed capture frame rate, used to convert frame counts to seconds.
+  fps: 30.0
+
+  # Loop the video file when it ends.
+  loop: false
+
+tracker:
+  # Detections at or above this score are matched first (the "primary" set).
+  track_high_thresh: 0.5
+
+  # Detections below track_high_thresh but at or above this score get a second
+  # association chance against unmatched tracks (the ByteTrack idea).
+  track_low_thresh: 0.1
+
+  # Maximum association cost. The cost is a blend of (1 - IoU) and normalised
+  # centre distance, so 1.0 means "no overlap at all, far away".
+  match_thresh: 0.8
+
+  # Hits required before a tentative track becomes a confirmed TRACKED track.
+  min_hits_to_confirm: 3
+
+  # A tentative track that is not confirmed within this many frames is dropped.
+  max_init_frames: 15
+
+  # Maximum number of consecutive missed frames before a lost track expires.
+  # 90 frames are 3 s at 30 fps, which matches lost_retention_seconds below.
+  max_lost_time: 90
+
+  # Wall-clock retention of a lost track, in seconds. The effective limit is
+  # min(max_lost_time frames, lost_retention_seconds).
+  lost_retention_seconds: 3.0
+
+  # Maximum number of lost tracks kept in the pool at the same time.
+  max_lost_tracks: 32
+
+  # Maximum number of active (non-expired) tracks.
+  max_active_tracks: 32
+
+  # Weight of the normalised centre-distance term in the association cost.
+  # 0.0 = pure IoU, 1.0 = pure distance.
+  distance_weight: 0.35
+
+  # Use the Kalman velocity estimate to widen/narrow the association gate.
+  use_motion: true
+
+target:
+  # none | largest | track_id | identity
+  #
+  # none     - nothing is selected.
+  # largest  - the largest visible face is selected. This is a geometric
+  #            heuristic; it does NOT identify a person.
+  # track_id - the track with the given ID is selected.
+  # identity - the face that was enrolled under `name` is selected. This one
+  #            really identifies a person: the green frame follows the name,
+  #            even when the person comes back with a new track ID.
+  #
+  # The target can always be changed or cleared interactively while running.
+  mode: none
+
+  # Track that is selected at start-up when mode == track_id.
+  track_id: 0
+
+  # The enrolled person that is selected when mode == identity.
+  name: ""
+
+  # How long the selected target is kept after it was last observed. When the
+  # limit is reached the target expires: the ID is released, the system stops
+  # searching and no other face is silently substituted.
+  lost_retention_seconds: 10.0
+
+  # Only tracks confirmed by several observations may be selected.
+  require_confirmed: true
+
+  # Pick a new target automatically when the current one expires.
+  # Off by default: the system must not switch to another person on its own.
+  auto_reselect: false
+
+reacquisition:
+  # Master switch for the lost-track search / restore mechanism.
+  enabled: true
+
+  # Weighted evidence score required to restore a lost track (short gaps).
+  score_threshold: 0.55
+
+  # Hard gate: the detection centre may not be further than
+  # max_distance_ratio * (track box diagonal) away from the predicted centre.
+  max_distance_ratio: 2.5
+
+  # Hard gate on the size ratio (detection size / last observed size).
+  min_size_ratio: 0.5
+  max_size_ratio: 2.0
+
+  # If the runner-up candidate is within this margin of the best candidate, the
+  # evidence is considered ambiguous and the match is rejected.
+  ambiguity_margin: 0.08
+
+  # Evidence weights (they do not have to sum to 1).
+  distance_weight: 0.40
+  overlap_weight: 0.20
+  velocity_weight: 0.15
+  size_weight: 0.10
+  confidence_weight: 0.15
+
+  # Time decay constant (seconds). The positional evidence is discounted by
+  # exp(-dt / tau), because the motion prediction gets less trustworthy the
+  # longer the target is missing. The evidence that does not depend on the
+  # prediction (size, confidence, velocity) is not decayed. After a long gap
+  # the reference is the last observed box, which does not drift, so the decay
+  # is not applied at all and the stricter long-gap rules carry the burden.
+  time_decay_tau: 2.0
+
+  # --- duration aware rules -------------------------------------------- #
+  # After this many seconds without an observation the motion prediction is no
+  # longer trusted and the requirements for restoring the track get stricter.
+  long_gap_seconds: 2.0
+
+  # Multiplier applied to score_threshold for long gaps.
+  long_gap_score_multiplier: 1.3
+
+  # Tighter spatial gate for long gaps (relative to the track box diagonal).
+  long_gap_max_distance_ratio: 1.5
+
+  # Minimum detection confidence accepted for long gaps.
+  long_gap_min_confidence: 0.35
+
+  # --- optional appearance matching ------------------------------------ #
+  # Disabled by default. An unvalidated face similarity score must never be the
+  # reason a track is restored, and it may never create a match on its own.
+  appearance_enabled: false
+  appearance_weight: 0.0
+  appearance_threshold: 0.0
+
+identity:
+  # Master switch of the identity layer (ArcFace). Off by default.
+  #
+  # When it is on, the enrolled people are recognised: every face that matches
+  # an enrolled person gets a GREEN frame and a name, and the selected target
+  # is described by a face embedding. While the target is visible the
+  # embedding is kept up to date; while the target is missing every candidate
+  # face is compared against it, and a candidate that is recognised restores
+  # the ORIGINAL track ID - even when the motion prediction no longer points
+  # at the right place.
+  enabled: false
+
+  # The enrolled people (the "gallery"). This is the equivalent of the
+  # `data/face_database.pkl` of the working reference system, stored as JSON.
+  # Write it with:  python -m src.enroll --name <name>
+  gallery_path: profiles/face_database.json
+
+  # How often (in frames) the visible faces are compared with the gallery.
+  # Every comparison embeds the face, so a low value costs frame rate.
+  gallery_interval: 10
+
+  # How many poses (embeddings) of one face are kept. The similarity is the
+  # maximum over all of them, so a face that turns to the side still matches
+  # the sample that was captured from that side.
+  max_embeddings: 8
+
+  # ArcFace / InsightFace ONNX embedder (w600k_r50 style, 512-D output).
+  embedder_path: models/embedder_arcface.onnx
+
+  # MediaPipe FaceLandmarker model, used for the 5-point alignment.
+  # Optional: without it the plain detector box is used (weaker scores).
+  landmarker_path: models/face_landmarker.task
+
+  # ONNX Runtime execution providers for the embedder.
+  providers: [CPUExecutionProvider]
+
+  # auto | landmarks | crop
+  # auto     - landmarks when the model is available, plain crop otherwise.
+  # landmarks - always align with the 5 keypoints (accurate, needs the model).
+  # crop     - always use the plain detector box (no extra model).
+  alignment: auto
+
+  # What the detector boxes are (auto | face | body).
+  # auto - a box much taller than wide is a whole body.
+  # face - the box is the face (the Haar backend).
+  # body - the box is the whole person (the COCO person model): the face is
+  #        located with the landmark model inside the box, and the GREEN frame
+  #        is drawn around the whole body.
+  box: auto
+
+  # Minimum cosine similarity to accept a candidate as the same person.
+  # Below this value the candidate is a different person and is rejected.
+  threshold: 0.6
+
+  # Faces smaller than this (pixels) are not embedded.
+  min_face_size: 40
+
+  # Relative enlargement of the crop around the detector box.
+  crop_margin: 0.15
+
+  # Observations that are less similar than this to the known poses are
+  # ignored, so the reference cannot drift onto a different person.
+  reference_min_similarity: 0.4
+
+  # How many frames pass between two reference updates.
+  reference_interval: 3
+
+  # Distance gate (relative to the track diagonal) that still applies when the
+  # identity confirmed the candidate. The face is the evidence then: a person
+  # who walked across the room is still that person.
+  max_distance_ratio: 15.0
+
+  # Size ratio limits that still apply when the identity confirmed the
+  # candidate (the person may have come much closer or further away).
+  min_size_ratio: 0.25
+  max_size_ratio: 4.0
+
+  # Evidence score of a candidate that was confirmed by the identity.
+  confirmed_score: 0.95
+
+  # Two confirmed candidates that are closer than this to each other are
+  # ambiguous (two similar looking people) and both are rejected.
+  ambiguity_margin: 0.1
+
+prediction:
+  # How long (seconds) a predicted position is shown / used for association
+  # after the last reliable observation. A prediction is an estimate, never a
+  # proof that the face is still there.
+  max_prediction_time: 1.0
+
+  # Maximum distance (pixels) the prediction may travel; 0 = unlimited.
+  max_prediction_distance: 0.0
+
+visualization:
+  enabled: true
+  show_predictions: true
+  show_trail: true
+  trail_length: 30
+  window_name: "YOLOX Face Tracking"
+  show_dashboard: true
+
+logging:
+  level: INFO
+  file: ""
+  format: "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
+
+runtime:
+  # Run the detector every N frames (1 = every frame). The tracker still runs
+  # on every frame, so track IDs stay stable while detection is throttled.
+  detection_interval: 1
+
+  # Stop after N frames (0 = unlimited).
+  max_frames: 0
+
+  # Optional path to write an annotated video of the session.
+  record_output: ""
+
+  # Save annotated frames to disk for debugging.
+  save_debug_frames: false

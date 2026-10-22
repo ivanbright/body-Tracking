@@ -1,0 +1,12 @@
+# Runtime dependencies of the YOLOX face tracking project.
+#
+# Install with:  pip install -r requirements.txt
+#
+# No dependency is installed into the global environment by this project; the
+# list below is the reference for a fresh virtual environment.
+
+numpy>=1.24
+opencv-python>=4.8
+onnxruntime>=1.16
+scipy>=1.10
+PyYAML>=6.0

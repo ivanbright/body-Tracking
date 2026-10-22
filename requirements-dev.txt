@@ -1,0 +1,7 @@
+# Development and test dependencies.
+-r requirements.txt
+
+pytest>=7.4
+
+# Only needed for the ONNX integration test (it exports a tiny model).
+# torch>=2.0
